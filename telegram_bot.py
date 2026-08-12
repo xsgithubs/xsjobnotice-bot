@@ -1,10 +1,12 @@
 import os
+import time
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
+# টেলিগ্রাম কনফিগারেশন
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
@@ -26,12 +28,32 @@ def save_history(url):
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
         f.write(url + "\n")
 
+def detect_category(text):
+    """নোটিশের টাইটেল দেখে হ্যাশট্যাগ ক্যাটাগরি তৈরি করে"""
+    text_lower = text.lower()
+    tags = []
+    if any(k in text_lower for k in ["নিয়োগ", "চাকরি", "circular", "recruitment", "job"]):
+        tags.append("#নিয়োগ")
+    if any(k in text_lower for k in ["ফলাফল", "result", "merit list"]):
+        tags.append("#ফলাফল")
+    if any(k in text_lower for k in ["পরীক্ষা", "সময়সূচী", "প্রবেশপত্র", "admit card", "exam"]):
+        tags.append("#পরীক্ষা")
+    if any(k in text_lower for k in ["ভর্তি", "admission"]):
+        tags.append("#ভর্তি")
+    
+    return " ".join(tags) if tags else "#নোটিশ"
+
 def send_telegram_pdf(file_path, caption):
+    """HTML ফরম্যাটিং ব্যবহার করে টেলিগ্রামে মেসেজ ও PDF পাঠায়"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     with open(file_path, "rb") as doc:
-        payload = {"chat_id": CHAT_ID, "caption": caption}
+        payload = {
+            "chat_id": CHAT_ID, 
+            "caption": caption,
+            "parse_mode": "HTML"
+        }
         files = {"document": doc}
-        requests.post(url, data=payload, files=files)
+        requests.post(url, data=payload, files=files, timeout=30)
 
 def get_server_timestamp(response):
     server_date_str = response.headers.get('Last-Modified') or response.headers.get('Date')
@@ -51,11 +73,23 @@ def check_and_notify():
     with open("urls.txt", "r", encoding="utf-8") as f:
         urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
     for site_url in urls:
         try:
-            res = requests.get(site_url, headers=headers, timeout=15, verify=False)
+            # ৩ বার চেষ্টা করার রিট্রাই লজিক
+            res = None
+            for _ in range(3):
+                try:
+                    res = requests.get(site_url, headers=headers, timeout=15, verify=False)
+                    if res.status_code == 200:
+                        break
+                except Exception:
+                    time.sleep(2)
+            
+            if not res or res.status_code != 200:
+                continue
+
             soup = BeautifulSoup(res.text, 'html.parser')
             rows = soup.find_all('tr')
 
@@ -92,16 +126,27 @@ def check_and_notify():
                                 continue
 
                         if pdf_url not in processed_urls:
-                            pdf_res = requests.get(pdf_url, headers=headers, timeout=20, verify=False)
-                            if pdf_res.status_code == 200 and len(pdf_res.content) > 10240:
+                            pdf_res = requests.get(pdf_url, headers=headers, timeout=25, verify=False)
+                            
+                            # Content-Type ও সাইজ ভ্যালিডেশন
+                            content_type = pdf_res.headers.get('Content-Type', '').lower()
+                            if pdf_res.status_code == 200 and len(pdf_res.content) > 10240 and ('pdf' in content_type or pdf_url.endswith('.pdf')):
                                 server_dt = get_server_timestamp(pdf_res)
                                 time_str = server_dt.strftime("%d-%m-%Y %I:%M %p")
+                                category_tag = detect_category(title)
                                 
                                 temp_file = "temp_notice.pdf"
                                 with open(temp_file, "wb") as f:
                                     f.write(pdf_res.content)
 
-                                caption = f"📌 {title[:100]}\n🕒 আপলোড সময়: {time_str}"
+                                # সুন্দর HTML ক্যাপশন
+                                caption = (
+                                    f"📌 <b>{title[:120]}</b>\n\n"
+                                    f"🏷 <b>ক্যাটাগরি:</b> {category_tag}\n"
+                                    f"🕒 <b>প্রকাশের সময়:</b> {time_str}\n"
+                                    f"🔗 <a href='{site_url}'>উৎস ওয়েবসাইট</a>"
+                                )
+                                
                                 send_telegram_pdf(temp_file, caption)
 
                                 save_history(pdf_url)
