@@ -2,7 +2,7 @@ name: Hourly Notice Checker
 
 on:
   schedule:
-    - cron: '0 * * * *' # প্রতি ঘণ্টা পর পর ক্লাউডে স্বয়ংক্রিয়ভাবে চলবে
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -30,6 +30,6 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add downloaded_history.txt
-          git commit -m "Update download history" || exit 0
-          git push
+          git add downloaded_history.txt || true
+          git commit -m "Update download history" || echo "No changes to commit"
+          git push || true
