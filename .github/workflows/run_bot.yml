@@ -18,7 +18,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install Dependencies
-        run: pip install requests bs4
+        run: pip install requests bs4 aiohttp
 
       - name: Run Script
         env:
