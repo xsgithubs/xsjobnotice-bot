@@ -1,6 +1,7 @@
 import os
-import time
-import requests
+import re
+import asyncio
+import aiohttp
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from datetime import datetime
@@ -17,6 +18,8 @@ KEYWORDS = [
 ]
 
 HISTORY_FILE = "downloaded_history.txt"
+# একসাথে কতগুলো ওয়েবসাইট চেক করবে (Concurrency Limit)
+CONCURRENCY_LIMIT = 30 
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -29,7 +32,6 @@ def save_history(url):
         f.write(url + "\n")
 
 def detect_category(text):
-    """নোটিশের টাইটেল দেখে হ্যাশট্যাগ ক্যাটাগরি তৈরি করে"""
     text_lower = text.lower()
     tags = []
     if any(k in text_lower for k in ["নিয়োগ", "চাকরি", "circular", "recruitment", "job"]):
@@ -43,20 +45,22 @@ def detect_category(text):
     
     return " ".join(tags) if tags else "#নোটিশ"
 
-def send_telegram_pdf(file_path, caption):
-    """HTML ফরম্যাটিং ব্যবহার করে টেলিগ্রামে মেসেজ ও PDF পাঠায়"""
+async def send_telegram_pdf(session, file_path, caption):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    with open(file_path, "rb") as doc:
-        payload = {
-            "chat_id": CHAT_ID, 
-            "caption": caption,
-            "parse_mode": "HTML"
-        }
-        files = {"document": doc}
-        requests.post(url, data=payload, files=files, timeout=30)
+    data = aiohttp.FormData()
+    data.add_field('chat_id', CHAT_ID)
+    data.add_field('caption', caption)
+    data.add_field('parse_mode', 'HTML')
+    data.add_field('document', open(file_path, 'rb'), filename="notice.pdf", content_type='application/pdf')
+    
+    try:
+        async with session.post(url, data=data, timeout=30) as resp:
+            await resp.json()
+    except Exception as e:
+        print(f"Telegram upload error: {e}")
 
-def get_server_timestamp(response):
-    server_date_str = response.headers.get('Last-Modified') or response.headers.get('Date')
+def get_server_timestamp(headers):
+    server_date_str = headers.get('Last-Modified') or headers.get('Date')
     if server_date_str:
         try:
             return parsedate_to_datetime(server_date_str)
@@ -64,33 +68,16 @@ def get_server_timestamp(response):
             pass
     return datetime.now()
 
-def check_and_notify():
-    processed_urls = load_history()
-    
-    if not os.path.exists("urls.txt"):
-        return
-        
-    with open("urls.txt", "r", encoding="utf-8") as f:
-        urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-
-    for site_url in urls:
+async def fetch_site(semaphore, session, site_url, processed_urls, history_lock):
+    async with semaphore:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         try:
-            # ৩ বার চেষ্টা করার রিট্রাই লজিক
-            res = None
-            for _ in range(3):
-                try:
-                    res = requests.get(site_url, headers=headers, timeout=15, verify=False)
-                    if res.status_code == 200:
-                        break
-                except Exception:
-                    time.sleep(2)
-            
-            if not res or res.status_code != 200:
-                continue
+            async with session.get(site_url, headers=headers, timeout=15, ssl=False) as res:
+                if res.status != 200:
+                    return
+                html_text = await res.text()
 
-            soup = BeautifulSoup(res.text, 'html.parser')
+            soup = BeautifulSoup(html_text, 'html.parser')
             rows = soup.find_all('tr')
 
             for row in rows:
@@ -115,8 +102,9 @@ def check_and_notify():
                         pdf_url = target_url
                         if '.pdf' not in target_url.lower():
                             try:
-                                sub_res = requests.get(target_url, headers=headers, timeout=10, verify=False)
-                                sub_soup = BeautifulSoup(sub_res.text, 'html.parser')
+                                async with session.get(target_url, headers=headers, timeout=10, ssl=False) as sub_res:
+                                    sub_html = await sub_res.text()
+                                sub_soup = BeautifulSoup(sub_html, 'html.parser')
                                 pdf_a = sub_soup.find('a', href=lambda h: h and '.pdf' in h.lower())
                                 if pdf_a:
                                     pdf_url = urljoin(target_url, pdf_a['href'])
@@ -126,36 +114,55 @@ def check_and_notify():
                                 continue
 
                         if pdf_url not in processed_urls:
-                            pdf_res = requests.get(pdf_url, headers=headers, timeout=25, verify=False)
-                            
-                            # Content-Type ও সাইজ ভ্যালিডেশন
-                            content_type = pdf_res.headers.get('Content-Type', '').lower()
-                            if pdf_res.status_code == 200 and len(pdf_res.content) > 10240 and ('pdf' in content_type or pdf_url.endswith('.pdf')):
-                                server_dt = get_server_timestamp(pdf_res)
-                                time_str = server_dt.strftime("%d-%m-%Y %I:%M %p")
-                                category_tag = detect_category(title)
+                            async with session.get(pdf_url, headers=headers, timeout=25, ssl=False) as pdf_res:
+                                content_type = pdf_res.headers.get('Content-Type', '').lower()
+                                content = await pdf_res.read()
                                 
-                                temp_file = "temp_notice.pdf"
-                                with open(temp_file, "wb") as f:
-                                    f.write(pdf_res.content)
+                                if pdf_res.status == 200 and len(content) > 10240 and ('pdf' in content_type or pdf_url.endswith('.pdf')):
+                                    server_dt = get_server_timestamp(pdf_res.headers)
+                                    time_str = server_dt.strftime("%d-%m-%Y %I:%M %p")
+                                    category_tag = detect_category(title)
+                                    
+                                    # ইউনিক ফাইলের নাম দেওয়া
+                                    safe_filename = f"temp_{abs(hash(pdf_url))}.pdf"
+                                    with open(safe_filename, "wb") as f:
+                                        f.write(content)
 
-                                # সুন্দর HTML ক্যাপশন
-                                caption = (
-                                    f"📌 <b>{title[:120]}</b>\n\n"
-                                    f"🏷 <b>ক্যাটাগরি:</b> {category_tag}\n"
-                                    f"🕒 <b>প্রকাশের সময়:</b> {time_str}\n"
-                                    f"🔗 <a href='{site_url}'>উৎস ওয়েবসাইট</a>"
-                                )
-                                
-                                send_telegram_pdf(temp_file, caption)
+                                    caption = (
+                                        f"📌 <b>{title[:120]}</b>\n\n"
+                                        f"🏷 <b>ক্যাটাগরি:</b> {category_tag}\n"
+                                        f"🕒 <b>প্রকাশের সময়:</b> {time_str}\n"
+                                        f"🔗 <a href='{site_url}'>উৎস ওয়েবসাইট</a>"
+                                    )
+                                    
+                                    await send_telegram_pdf(session, safe_filename, caption)
 
-                                save_history(pdf_url)
-                                processed_urls.add(pdf_url)
-                                
-                                if os.path.exists(temp_file):
-                                    os.remove(temp_file)
+                                    async with history_lock:
+                                        save_history(pdf_url)
+                                        processed_urls.add(pdf_url)
+                                    
+                                    if os.path.exists(safe_filename):
+                                        os.remove(safe_filename)
         except Exception:
             pass
 
+async def main():
+    processed_urls = load_history()
+    
+    if not os.path.exists("urls.txt"):
+        return
+        
+    with open("urls.txt", "r", encoding="utf-8") as f:
+        # ডুপ্লিকেট ও খালি লাইন বাদ দিয়ে শুধু ইউনিক URL গুলো নেওয়া
+        urls = list(set([line.strip() for line in f if line.strip() and not line.startswith("#") and line.startswith("http")]))
+
+    semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
+    history_lock = asyncio.Lock()
+
+    conn = aiohttp.TCPConnector(limit=100, ssl=False)
+    async with aiohttp.ClientSession(connector=conn) as session:
+        tasks = [fetch_site(semaphore, session, url, processed_urls, history_lock) for url in urls]
+        await asyncio.gather(*tasks)
+
 if __name__ == "__main__":
-    check_and_notify()
+    asyncio.run(main())
