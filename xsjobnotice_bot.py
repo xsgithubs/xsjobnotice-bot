@@ -54,25 +54,25 @@ def get_current_bd_datetime():
     month = MONTH_MAP.get(month_en, month_en)
     year = bd_dt.strftime("%Y").translate(EN_TO_BN_NUM)
     
-    time_str = bd_dt.strftime("%I.%M").translate(EN_TO_BN_NUM)
+    time_str = bd_dt.strftime("%I,%M").translate(EN_TO_BN_NUM)
     ampm = "সকাল" if bd_dt.hour < 12 else "বিকাল" if bd_dt.hour < 17 else "সন্ধ্যা" if bd_dt.hour < 20 else "রাত"
     
-    return f"{day} {month} {year}; {ampm} {time_str} টা"
+    return f"তারিখ: {day}/{bd_dt.strftime('%m').translate(EN_TO_BN_NUM)}/{year}, সময়: {ampm} {time_str}টা"
 
 def detect_category(text):
-    """শিরোনাম দেখে ক্যাটাগরি নির্ধারণ করার ফাংশন"""
+    """শিরোনাম দেখে ক্যাটাগরি নির্ধারণ করার ফাংশন (হ্যাশট্যাগ ছাড়া)"""
     text_lower = text.lower()
     tags = []
     if any(k in text_lower for k in ["নিয়োগ", "চাকরি", "circular", "recruitment", "job"]):
-        tags.append("#নিয়োগ")
+        tags.append("নিয়োগ")
     if any(k in text_lower for k in ["ফলাফল", "result", "merit list"]):
-        tags.append("#ফলাফল")
+        tags.append("ফলাফল")
     if any(k in text_lower for k in ["পরীক্ষা", "সময়সূচী", "প্রবেশপত্র", "admit card", "exam"]):
-        tags.append("#পরীক্ষা")
+        tags.append("পরীক্ষা")
     if any(k in text_lower for k in ["ভর্তি", "admission"]):
-        tags.append("#ভর্তি")
+        tags.append("ভর্তি")
     
-    return " ".join(tags) if tags else "#নোটিশ"
+    return ", ".join(tags) if tags else "নোটিশ"
 
 def load_sent_notices():
     if os.path.exists(SENT_NOTICES_FILE):
@@ -92,11 +92,12 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
     
+    # আপনার চাওয়া হুবহু ফরম্যাট অনুযায়ী মেসেজ স্ট্রাকচার
     message = (
-        f"⏱️ <b>তারিখ/সময়:</b> {display_time}\n"
+        f"📝 <b>শিরোনাম:</b> {clean_title}\n"
+        f"⏱️ {display_time}\n"
         f"🏷 <b>ক্যাটাগরি:</b> {category_tag}\n"
-        f"🏛 <b>দপ্তর:</b> {clean_site_name}\n\n"
-        f"📝 <b>শিরোনাম:</b>\n<b>{clean_title}</b>\n\n"
+        f"🏛 <b>দপ্তর:</b> {clean_site_name}\n"
         f"🔗 <a href='{pdf_url}'>ডাউনলোড / বিস্তারিত দেখুন</a>"
     )
     
@@ -142,7 +143,6 @@ def scrape_site(url, sent_notices):
             file_link = ""
             found_date = ""
 
-            # ১. নোটিশ বোর্ডের টেবিল ঘর থেকে প্রকাশের তারিখ খোঁজা
             tds = row.find_all('td')
             for td in tds:
                 txt = td.get_text(strip=True)
@@ -172,7 +172,8 @@ def scrape_site(url, sent_notices):
                 notice_id = re.sub(r'[^a-zA-Z0-9]', '', full_pdf_url)
 
                 if notice_id not in sent_notices:
-                    display_time = format_to_bangla_date(found_date) or get_current_bd_datetime()
+                    date_str = format_to_bangla_date(found_date)
+                    display_time = f"তারিখ: {date_str}" if date_str else get_current_bd_datetime()
                     category_tag = detect_category(title)
                     
                     if send_telegram_msg(title, full_pdf_url, site_name, display_time, category_tag):
