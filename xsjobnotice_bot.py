@@ -1,5 +1,4 @@
 import os
-import re
 import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
@@ -7,7 +6,6 @@ from urllib.parse import urljoin
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
-# টেলিগ্রাম কনফিগারেশন
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 
@@ -18,8 +16,8 @@ KEYWORDS = [
 ]
 
 HISTORY_FILE = "downloaded_history.txt"
-# একসাথে কতগুলো ওয়েবসাইট চেক করবে (Concurrency Limit)
-CONCURRENCY_LIMIT = 30 
+URLS_FILE = "xsjobnoticeurls.txt"
+CONCURRENCY_LIMIT = 20 
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -46,6 +44,10 @@ def detect_category(text):
     return " ".join(tags) if tags else "#নোটিশ"
 
 async def send_telegram_pdf(session, file_path, caption):
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("Telegram Token or Chat ID missing!")
+        return
+
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     data = aiohttp.FormData()
     data.add_field('chat_id', CHAT_ID)
@@ -70,7 +72,7 @@ def get_server_timestamp(headers):
 
 async def fetch_site(semaphore, session, site_url, processed_urls, history_lock):
     async with semaphore:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         try:
             async with session.get(site_url, headers=headers, timeout=15, ssl=False) as res:
                 if res.status != 200:
@@ -123,7 +125,6 @@ async def fetch_site(semaphore, session, site_url, processed_urls, history_lock)
                                     time_str = server_dt.strftime("%d-%m-%Y %I:%M %p")
                                     category_tag = detect_category(title)
                                     
-                                    # ইউনিক ফাইলের নাম দেওয়া
                                     safe_filename = f"temp_{abs(hash(pdf_url))}.pdf"
                                     with open(safe_filename, "wb") as f:
                                         f.write(content)
@@ -149,12 +150,16 @@ async def fetch_site(semaphore, session, site_url, processed_urls, history_lock)
 async def main():
     processed_urls = load_history()
     
-    if not os.path.exists("urls.txt"):
+    if not os.path.exists(URLS_FILE):
+        print(f"{URLS_FILE} file not found!")
         return
         
-    with open("urls.txt", "r", encoding="utf-8") as f:
-        # ডুপ্লিকেট ও খালি লাইন বাদ দিয়ে শুধু ইউনিক URL গুলো নেওয়া
-        urls = list(set([line.strip() for line in f if line.strip() and not line.startswith("#") and line.startswith("http")]))
+    with open(URLS_FILE, "r", encoding="utf-8") as f:
+        urls = list(set([line.strip() for line in f if line.strip().startswith("http")]))
+
+    if not urls:
+        print(f"No valid URLs found in {URLS_FILE}")
+        return
 
     semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
     history_lock = asyncio.Lock()
