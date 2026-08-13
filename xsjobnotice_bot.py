@@ -26,7 +26,7 @@ DEPT_NAME_MAP = {
     "mopa.gov.bd": "জনপ্রশাসন মন্ত্রণালয়",
     "lgd.gov.bd": "স্থানীয় সরকার বিভাগ",
     "mof.gov.bd": "অর্থ বিভাগ",
-    "cabinet.gov.bd": "মন্ত্রিপরিপরিষদ বিভাগ",
+    "cabinet.gov.bd": "মন্ত্রিপরিষদ বিভাগ",
     "barisaldiv.gov.bd": "বিভাগীয় কমিশনারের কার্যালয়, বরিশাল",
 }
 
@@ -54,9 +54,7 @@ def get_current_bd_datetime():
     day = bd_dt.strftime("%d").translate(EN_TO_BN_NUM)
     month = bd_dt.strftime("%m").translate(EN_TO_BN_NUM)
     year = bd_dt.strftime("%Y").translate(EN_TO_BN_NUM)
-    time_str = bd_dt.strftime("%I,%M").translate(EN_TO_BN_NUM)
-    ampm = "সকাল" if bd_dt.hour < 12 else "বিকাল" if bd_dt.hour < 17 else "সন্ধ্যা" if bd_dt.hour < 20 else "রাত"
-    return f"তারিখ: {day}/{month}/{year}, সময়: {ampm} {time_str}টা"
+    return f"{day}-{month}-{year}"
 
 def detect_category(text):
     text_lower = text.lower()
@@ -85,41 +83,36 @@ def save_sent_notice(notice_id):
         f.write(f"{notice_id}\n")
 
 def extract_site_name(soup, url):
-    """ওয়েবসাইটের Title বা Meta Tag থেকে স্বয়ংক্রিয়ভাবে বাংলা দপ্তরের নাম বের করার ফাংশন"""
     domain = urlparse(url).netloc.replace("www.", "").lower()
     
-    # ১. ডিকশনারিতে ম্যানুয়ালি সেট করা থাকলে সেটি আগে নিবে
     if domain in DEPT_NAME_MAP:
         return DEPT_NAME_MAP[domain]
     
-    # ২. ওয়েবসাইটের <title> ট্যাগ থেকে নাম এক্সট্রাক্ট করা
     try:
         title_tag = soup.find('title')
         if title_tag:
             full_title = title_tag.get_text(strip=True)
-            # জাতীয় তথ্য বাতায়ন বা সরকারি ওয়েবসাইটের টাইটেল ফিল্টার করা
             parts = re.split(r'\||-|–', full_title)
             for part in parts:
                 clean_part = part.strip()
-                # বাংলা অক্ষর আছে এমন অংশ খুঁজে নেওয়া
                 if re.search(r'[\u0980-\u09FF]', clean_part) and "Home" not in clean_part and "Welcome" not in clean_part:
                     return clean_part
     except Exception:
         pass
 
-    # ৩. কোনো বাংলা না পাওয়া গেলে ব্যাকআপ হিসেবে ডোমেইন নাম ফেরত দেওয়া
     return domain.upper()
 
 def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
     
+    # 🎨 আপনার ছবির মতো হুবহু কার্ড ডিজাইনের HTML স্ট্রাকচার
     message = (
-        f"📝 <b>শিরোনাম:</b> {clean_title}\n"
-        f"⏱️ {display_time}\n"
-        f"🏷 <b>ক্যাটাগরি:</b> {category_tag}\n"
-        f"🏛 <b>দপ্তর:</b> {clean_site_name}\n"
-        f"🔗 <a href='{pdf_url}'>ডাউনলোড / বিস্তারিত দেখুন</a>"
+        f"🏷 <b>{clean_title}</b>\n\n"
+        f"> <b>তারিখ:</b> {display_time}\n"
+        f"> <b>ক্যাটাগরি:</b> {category_tag}\n"
+        f"> <b>দপ্তর:</b> {clean_site_name}\n\n"
+        f"⬇️ <a href='{pdf_url}'>ডাউনলোড/বিস্তারিত দেখুন</a>"
     )
     
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -150,8 +143,6 @@ def scrape_site(url, sent_notices):
             return
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # স্বয়ংক্রিয়ভাবে বাংলা দপ্তরের নাম নিয়ে আসবে
         site_name = extract_site_name(soup, url)
         
         rows = soup.find_all('tr')
@@ -198,7 +189,7 @@ def scrape_site(url, sent_notices):
 
                     if notice_id not in sent_notices:
                         date_str = format_to_bangla_date(found_date)
-                        display_time = f"তারিখ: {date_str}" if date_str else get_current_bd_datetime()
+                        display_time = date_str if date_str else get_current_bd_datetime()
                         category_tag = detect_category(title)
                         
                         if send_telegram_msg(title, full_pdf_url, site_name, display_time, category_tag):
