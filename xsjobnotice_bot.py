@@ -14,21 +14,19 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 SENT_NOTICES_FILE = "downloaded_history.txt"
 URLS_FILE = "xsjobnoticeurls.txt"
 
-# শুধু এই নির্দিষ্ট বিষয় সম্পর্কিত নোটিশই টেলিগ্রামে যাবে
 KEYWORDS = [
     "নিয়োগ", "চাকরি", "পরীক্ষা", "সময়সূচী", "প্রবেশপত্র", "বিজ্ঞপ্তি",
     "ফলাফল", "মেধা তালিকা", "ভর্তি", "আসন বিন্যাস", "প্রার্থী", "ই-টেন্ডার", "টেন্ডার",
     "circular", "recruitment", "job", "admit card", "exam", "result", "merit list", "admission", "tender"
 ]
 
-# বাদ দেওয়ার মত সাধারণ শব্দ (যেগুলো শিরোনাম হিসেবে ভুলভাবে ধরে নেয়)
 IGNORE_WORDS = ["দেখুন", "ডাউনলোড", "download", "view", "details", "বিস্তারিত", "click here", "pdf"]
 
 DEPT_NAME_MAP = {
     "mopa.gov.bd": "জনপ্রশাসন মন্ত্রণালয়",
     "lgd.gov.bd": "স্থানীয় সরকার বিভাগ",
     "mof.gov.bd": "অর্থ বিভাগ",
-    "cabinet.gov.bd": "মন্ত্রিপরিষদ বিভাগ",
+    "cabinet.gov.bd": "মন্ত্রিপরিপরিষদ বিভাগ",
     "barisaldiv.gov.bd": "বিভাগীয় কমিশনারের কার্যালয়, বরিশাল",
 }
 
@@ -86,9 +84,31 @@ def save_sent_notice(notice_id):
     with open(SENT_NOTICES_FILE, "a", encoding="utf-8") as f:
         f.write(f"{notice_id}\n")
 
-def get_site_name(url):
+def extract_site_name(soup, url):
+    """ওয়েবসাইটের Title বা Meta Tag থেকে স্বয়ংক্রিয়ভাবে বাংলা দপ্তরের নাম বের করার ফাংশন"""
     domain = urlparse(url).netloc.replace("www.", "").lower()
-    return DEPT_NAME_MAP.get(domain, domain.upper())
+    
+    # ১. ডিকশনারিতে ম্যানুয়ালি সেট করা থাকলে সেটি আগে নিবে
+    if domain in DEPT_NAME_MAP:
+        return DEPT_NAME_MAP[domain]
+    
+    # ২. ওয়েবসাইটের <title> ট্যাগ থেকে নাম এক্সট্রাক্ট করা
+    try:
+        title_tag = soup.find('title')
+        if title_tag:
+            full_title = title_tag.get_text(strip=True)
+            # জাতীয় তথ্য বাতায়ন বা সরকারি ওয়েবসাইটের টাইটেল ফিল্টার করা
+            parts = re.split(r'\||-|–', full_title)
+            for part in parts:
+                clean_part = part.strip()
+                # বাংলা অক্ষর আছে এমন অংশ খুঁজে নেওয়া
+                if re.search(r'[\u0980-\u09FF]', clean_part) and "Home" not in clean_part and "Welcome" not in clean_part:
+                    return clean_part
+    except Exception:
+        pass
+
+    # ৩. কোনো বাংলা না পাওয়া গেলে ব্যাকআপ হিসেবে ডোমেইন নাম ফেরত দেওয়া
+    return domain.upper()
 
 def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
@@ -130,7 +150,10 @@ def scrape_site(url, sent_notices):
             return
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        site_name = get_site_name(url)
+        
+        # স্বয়ংক্রিয়ভাবে বাংলা দপ্তরের নাম নিয়ে আসবে
+        site_name = extract_site_name(soup, url)
+        
         rows = soup.find_all('tr')
         
         for row in rows:
@@ -153,14 +176,12 @@ def scrape_site(url, sent_notices):
                 text = a.get_text(strip=True)
                 href = a['href'].strip()
 
-                # শুধু দীর্ঘ বাক্য এবং ইগনোর শব্দের বাইরে থাকা লেখাগুলোকে টাইটেল হিসেবে নিবে
                 if len(text) > 5 and not any(w in text.lower() for w in IGNORE_WORDS) and not title:
                     title = text
                 
                 if any(ext in href.lower() for ext in ['.pdf', 'download', 'site/view/notices', 'node', 'pages/notices']):
                     file_link = href
 
-            # যদি লিংকের লেখায় টাইটেল না পাওয়া যায়, তবে সেলের বাকি টেক্সট দেখবে
             if not title:
                 for td in tds:
                     txt = td.get_text(strip=True)
@@ -168,7 +189,6 @@ def scrape_site(url, sent_notices):
                         title = txt
                         break
 
-            # 🎯 কড়া ফিল্টার: টাইটেল থাকতে হবে এবং টাইটেলের ভেতরে অবশ্যই KEYWORDS থাকতে হবে
             if title and file_link:
                 is_relevant = any(kw.lower() in title.lower() for kw in KEYWORDS)
                 
