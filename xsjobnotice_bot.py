@@ -1,35 +1,66 @@
 import os
-import asyncio
-import aiohttp
+import re
+import html
+import logging
+import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
-from datetime import datetime
-from email.utils import parsedate_to_datetime
+from urllib.parse import urljoin, urlparse
+from datetime import datetime, timezone, timedelta
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-KEYWORDS = [
-    "নিয়োগ", "চাকরি", "পরীক্ষা", "সময়সূচী", "প্রবেশপত্র", "বিজ্ঞপ্তি",
-    "ফলাফল", "মেধা তালিকা", "ভর্তি", "আসন বিন্যাস",
-    "circular", "recruitment", "job", "admit card", "exam", "result", "merit list", "admission"
-]
-
-HISTORY_FILE = "downloaded_history.txt"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+SENT_NOTICES_FILE = "downloaded_history.txt"
 URLS_FILE = "xsjobnoticeurls.txt"
-CONCURRENCY_LIMIT = 20 
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    return set()
+# ওয়েবসাইট অনুযায়ী দপ্তরের বাংলা নামের তালিকা
+DEPT_NAME_MAP = {
+    "mopa.gov.bd": "জনপ্রশাসন মন্ত্রণালয়",
+    "lgd.gov.bd": "স্থানীয় সরকার বিভাগ",
+    "mof.gov.bd": "অর্থ বিভাগ",
+    "cabinet.gov.bd": "মন্ত্রিপরিষদ বিভাগ",
+    "barisaldiv.gov.bd": "বিভাগীয় কমিশনারের কার্যালয়, বরিশাল",
+}
 
-def save_history(url):
-    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        f.write(url + "\n")
+EN_TO_BN_NUM = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
+
+MONTH_MAP = {
+    "Jan": "জানুয়ারি", "Feb": "ফেব্রুয়ারি", "Mar": "মার্চ", "Apr": "এপ্রিল",
+    "May": "মে", "Jun": "জুন", "Jul": "জুলাই", "Aug": "আগস্ট",
+    "Sep": "সেপ্টেম্বর", "Oct": "অক্টোবর", "Nov": "নভেম্বর", "Dec": "ডিসেম্বর",
+    "January": "জানুয়ারি", "February": "ফেব্রুয়ারি", "March": "মার্চ",
+    "April": "এপ্রিল", "June": "জুন", "July": "জুলাই", "August": "আগস্ট",
+    "September": "সেপ্টেম্বর", "October": "অক্টোবর", "November": "নভেম্বর", "December": "ডিসেম্বর"
+}
+
+def format_to_bangla_date(date_str):
+    """টেবিল থেকে পাওয়া তারিখ ফরম্যাট করা"""
+    if not date_str:
+        return None
+    
+    clean = date_str.translate(EN_TO_BN_NUM)
+    for en_m, bn_m in MONTH_MAP.items():
+        clean = re.sub(rf'\b{en_m}\b', bn_m, clean, flags=re.IGNORECASE)
+    
+    return clean.strip()
+
+def get_current_bd_datetime():
+    """ব্যাকআপ তারিখ ও সময় (বাংলাদেশ সময়)"""
+    bd_dt = datetime.now(timezone.utc) + timedelta(hours=6)
+    
+    day = bd_dt.strftime("%d").translate(EN_TO_BN_NUM)
+    month_en = bd_dt.strftime("%B")
+    month = MONTH_MAP.get(month_en, month_en)
+    year = bd_dt.strftime("%Y").translate(EN_TO_BN_NUM)
+    
+    time_str = bd_dt.strftime("%I.%M").translate(EN_TO_BN_NUM)
+    ampm = "সকাল" if bd_dt.hour < 12 else "বিকাল" if bd_dt.hour < 17 else "সন্ধ্যা" if bd_dt.hour < 20 else "রাত"
+    
+    return f"{day} {month} {year}; {ampm} {time_str} টা"
 
 def detect_category(text):
+    """শিরোনাম দেখে ক্যাটাগরি নির্ধারণ করার ফাংশন"""
     text_lower = text.lower()
     tags = []
     if any(k in text_lower for k in ["নিয়োগ", "চাকরি", "circular", "recruitment", "job"]):
@@ -43,131 +74,131 @@ def detect_category(text):
     
     return " ".join(tags) if tags else "#নোটিশ"
 
-async def send_telegram_pdf(session, file_path, caption):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        print("Telegram Token or Chat ID missing!")
-        return
+def load_sent_notices():
+    if os.path.exists(SENT_NOTICES_FILE):
+        with open(SENT_NOTICES_FILE, "r", encoding="utf-8") as f:
+            return set(line.strip() for line in f if line.strip())
+    return set()
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    data = aiohttp.FormData()
-    data.add_field('chat_id', CHAT_ID)
-    data.add_field('caption', caption)
-    data.add_field('parse_mode', 'HTML')
-    data.add_field('document', open(file_path, 'rb'), filename="notice.pdf", content_type='application/pdf')
+def save_sent_notice(notice_id):
+    with open(SENT_NOTICES_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{notice_id}\n")
+
+def get_site_name(url):
+    domain = urlparse(url).netloc.replace("www.", "").lower()
+    return DEPT_NAME_MAP.get(domain, domain.upper())
+
+def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
+    clean_title = html.escape(title.strip())
+    clean_site_name = html.escape(site_name.strip())
+    
+    message = (
+        f"⏱️ <b>তারিখ/সময়:</b> {display_time}\n"
+        f"🏷 <b>ক্যাটাগরি:</b> {category_tag}\n"
+        f"🏛 <b>দপ্তর:</b> {clean_site_name}\n\n"
+        f"📝 <b>শিরোনাম:</b>\n<b>{clean_title}</b>\n\n"
+        f"🔗 <a href='{pdf_url}'>ডাউনলোড / বিস্তারিত দেখুন</a>"
+    )
+    
+    telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
     
     try:
-        async with session.post(url, data=data, timeout=30) as resp:
-            await resp.json()
+        res = requests.post(telegram_url, json=payload, timeout=15)
+        res.raise_for_status()
+        logging.info(f"Sent: {title}")
+        return True
     except Exception as e:
-        print(f"Telegram upload error: {e}")
+        logging.error(f"Telegram error: {e}")
+        return False
 
-def get_server_timestamp(headers):
-    server_date_str = headers.get('Last-Modified') or headers.get('Date')
-    if server_date_str:
-        try:
-            return parsedate_to_datetime(server_date_str)
-        except Exception:
-            pass
-    return datetime.now()
-
-async def fetch_site(semaphore, session, site_url, processed_urls, history_lock):
-    async with semaphore:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        try:
-            async with session.get(site_url, headers=headers, timeout=15, ssl=False) as res:
-                if res.status != 200:
-                    return
-                html_text = await res.text()
-
-            soup = BeautifulSoup(html_text, 'html.parser')
-            rows = soup.find_all('tr')
-
-            for row in rows:
-                row_text = row.get_text()
-                if any(kw in row_text.lower() for kw in KEYWORDS):
-                    tds = row.find_all('td')
-                    title = ""
-                    for td in tds:
-                        text = td.get_text(strip=True)
-                        if text and not text.isdigit() and text != "দেখুন" and len(text) > len(title):
-                            title = text
-                    
-                    links = row.find_all('a', href=True)
-                    target_url = None
-                    for a in links:
-                        href = a['href']
-                        if '.pdf' in href.lower() or 'site/view/notices' in href or 'download' in href.lower():
-                            target_url = urljoin(site_url, href)
-                            break
-                    
-                    if target_url:
-                        pdf_url = target_url
-                        if '.pdf' not in target_url.lower():
-                            try:
-                                async with session.get(target_url, headers=headers, timeout=10, ssl=False) as sub_res:
-                                    sub_html = await sub_res.text()
-                                sub_soup = BeautifulSoup(sub_html, 'html.parser')
-                                pdf_a = sub_soup.find('a', href=lambda h: h and '.pdf' in h.lower())
-                                if pdf_a:
-                                    pdf_url = urljoin(target_url, pdf_a['href'])
-                                else:
-                                    continue
-                            except Exception:
-                                continue
-
-                        if pdf_url not in processed_urls:
-                            async with session.get(pdf_url, headers=headers, timeout=25, ssl=False) as pdf_res:
-                                content_type = pdf_res.headers.get('Content-Type', '').lower()
-                                content = await pdf_res.read()
-                                
-                                if pdf_res.status == 200 and len(content) > 10240 and ('pdf' in content_type or pdf_url.endswith('.pdf')):
-                                    server_dt = get_server_timestamp(pdf_res.headers)
-                                    time_str = server_dt.strftime("%d-%m-%Y %I:%M %p")
-                                    category_tag = detect_category(title)
-                                    
-                                    safe_filename = f"temp_{abs(hash(pdf_url))}.pdf"
-                                    with open(safe_filename, "wb") as f:
-                                        f.write(content)
-
-                                    caption = (
-                                        f"📌 <b>{title[:120]}</b>\n\n"
-                                        f"🏷 <b>ক্যাটাগরি:</b> {category_tag}\n"
-                                        f"🕒 <b>প্রকাশের সময়:</b> {time_str}\n"
-                                        f"🔗 <a href='{site_url}'>উৎস ওয়েবসাইট</a>"
-                                    )
-                                    
-                                    await send_telegram_pdf(session, safe_filename, caption)
-
-                                    async with history_lock:
-                                        save_history(pdf_url)
-                                        processed_urls.add(pdf_url)
-                                    
-                                    if os.path.exists(safe_filename):
-                                        os.remove(safe_filename)
-        except Exception:
-            pass
-
-async def main():
-    processed_urls = load_history()
+def scrape_site(url, sent_notices):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    }
     
-    if not os.path.exists(URLS_FILE):
-        print(f"{URLS_FILE} file not found!")
-        return
+    try:
+        response = requests.get(url, headers=headers, timeout=20, verify=False)
+        if response.status_code != 200:
+            logging.warning(f"Could not fetch {url}, Code: {response.status_code}")
+            return
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        site_name = get_site_name(url)
         
-    with open(URLS_FILE, "r", encoding="utf-8") as f:
-        urls = list(set([line.strip() for line in f if line.strip().startswith("http")]))
+        rows = soup.find_all('tr')
+        
+        for row in rows:
+            anchors = row.find_all('a', href=True)
+            if not anchors:
+                continue
 
-    if not urls:
-        print(f"No valid URLs found in {URLS_FILE}")
+            title = ""
+            file_link = ""
+            found_date = ""
+
+            # ১. নোটিশ বোর্ডের টেবিল ঘর থেকে প্রকাশের তারিখ খোঁজা
+            tds = row.find_all('td')
+            for td in tds:
+                txt = td.get_text(strip=True)
+                if re.search(r'(\d{1,4}[-/\.\s]\d{1,2}[-/\.\s]\d{2,4})|(\d{1,2}\s+[A-Za-z\u0980-\u09FF]+\s+\d{4})', txt):
+                    found_date = txt
+                    break
+
+            for a in anchors:
+                text = a.get_text(strip=True)
+                href = a['href'].strip()
+
+                if len(text) > 3 and text not in ["দেখুন", "ডাউনলোড", "Download", "View"] and not title:
+                    title = text
+                
+                if any(ext in href.lower() for ext in ['.pdf', 'download', 'site/view/notices', 'node', 'pages/notices']):
+                    file_link = href
+
+            if not title or title in ["দেখুন", "ডাউনলোড", "Download", "View"]:
+                for td in tds:
+                    txt = td.get_text(strip=True)
+                    if len(txt) > 5 and txt not in ["দেখুন", "ডাউনলোড", "Download", "View"] and txt != found_date:
+                        title = txt
+                        break
+
+            if title and file_link:
+                full_pdf_url = urljoin(url, file_link)
+                notice_id = re.sub(r'[^a-zA-Z0-9]', '', full_pdf_url)
+
+                if notice_id not in sent_notices:
+                    display_time = format_to_bangla_date(found_date) or get_current_bd_datetime()
+                    category_tag = detect_category(title)
+                    
+                    if send_telegram_msg(title, full_pdf_url, site_name, display_time, category_tag):
+                        sent_notices.add(notice_id)
+                        save_sent_notice(notice_id)
+
+    except Exception as e:
+        logging.error(f"Error scraping {url}: {e}")
+
+def main():
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logging.error("Missing BOT TOKEN or CHAT ID")
         return
 
-    semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-    history_lock = asyncio.Lock()
-
-    conn = aiohttp.TCPConnector(limit=100, ssl=False)
-    async with aiohttp.ClientSession(connector=conn) as session:
-        tasks = [fetch_site(semaphore, session, url, processed_urls, history_lock) for url in urls]
-        await asyncio.gather(*tasks)
+    sent_notices = load_sent_notices()
+    
+    if os.path.exists(URLS_FILE):
+        with open(URLS_FILE, "r", encoding="utf-8") as f:
+            urls = [line.strip() for line in f if line.strip()]
+        
+        for url in urls:
+            logging.info(f"Scraping: {url}")
+            scrape_site(url, sent_notices)
+    else:
+        logging.error(f"{URLS_FILE} file missing!")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    requests.packages.urllib3.disable_warnings()
+    main()
