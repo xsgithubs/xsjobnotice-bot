@@ -14,14 +14,16 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 SENT_NOTICES_FILE = "downloaded_history.txt"
 URLS_FILE = "xsjobnoticeurls.txt"
 
-# ফিল্টার করার জন্য নির্দিষ্ট কিওয়ার্ডসমূহ
+# শুধু এই নির্দিষ্ট বিষয় সম্পর্কিত নোটিশই টেলিগ্রামে যাবে
 KEYWORDS = [
     "নিয়োগ", "চাকরি", "পরীক্ষা", "সময়সূচী", "প্রবেশপত্র", "বিজ্ঞপ্তি",
-    "ফলাফল", "মেধা তালিকা", "ভর্তি", "আসন বিন্যাস",
-    "circular", "recruitment", "job", "admit card", "exam", "result", "merit list", "admission"
+    "ফলাফল", "মেধা তালিকা", "ভর্তি", "আসন বিন্যাস", "প্রার্থী", "ই-টেন্ডার", "টেন্ডার",
+    "circular", "recruitment", "job", "admit card", "exam", "result", "merit list", "admission", "tender"
 ]
 
-# ওয়েবসাইট অনুযায়ী দপ্তরের বাংলা নামের তালিকা
+# বাদ দেওয়ার মত সাধারণ শব্দ (যেগুলো শিরোনাম হিসেবে ভুলভাবে ধরে নেয়)
+IGNORE_WORDS = ["দেখুন", "ডাউনলোড", "download", "view", "details", "বিস্তারিত", "click here", "pdf"]
+
 DEPT_NAME_MAP = {
     "mopa.gov.bd": "জনপ্রশাসন মন্ত্রণালয়",
     "lgd.gov.bd": "স্থানীয় সরকার বিভাগ",
@@ -42,31 +44,23 @@ MONTH_MAP = {
 }
 
 def format_to_bangla_date(date_str):
-    """টেবিল থেকে পাওয়া তারিখ ফরম্যাট করা"""
     if not date_str:
         return None
-    
     clean = date_str.translate(EN_TO_BN_NUM)
     for en_m, bn_m in MONTH_MAP.items():
         clean = re.sub(rf'\b{en_m}\b', bn_m, clean, flags=re.IGNORECASE)
-    
     return clean.strip()
 
 def get_current_bd_datetime():
-    """ব্যাকআপ তারিখ ও সময় (বাংলাদেশ সময়)"""
     bd_dt = datetime.now(timezone.utc) + timedelta(hours=6)
-    
     day = bd_dt.strftime("%d").translate(EN_TO_BN_NUM)
     month = bd_dt.strftime("%m").translate(EN_TO_BN_NUM)
     year = bd_dt.strftime("%Y").translate(EN_TO_BN_NUM)
-    
     time_str = bd_dt.strftime("%I,%M").translate(EN_TO_BN_NUM)
     ampm = "সকাল" if bd_dt.hour < 12 else "বিকাল" if bd_dt.hour < 17 else "সন্ধ্যা" if bd_dt.hour < 20 else "রাত"
-    
     return f"তারিখ: {day}/{month}/{year}, সময়: {ampm} {time_str}টা"
 
 def detect_category(text):
-    """শিরোনাম দেখে ক্যাটাগরি নির্ধারণ করার ফাংশন"""
     text_lower = text.lower()
     tags = []
     if any(k in text_lower for k in ["নিয়োগ", "চাকরি", "circular", "recruitment", "job"]):
@@ -77,6 +71,8 @@ def detect_category(text):
         tags.append("পরীক্ষা")
     if any(k in text_lower for k in ["ভর্তি", "admission"]):
         tags.append("ভর্তি")
+    if any(k in text_lower for k in ["টেন্ডার", "tender"]):
+        tags.append("টেন্ডার")
     
     return ", ".join(tags) if tags else "নোটিশ"
 
@@ -131,21 +127,13 @@ def scrape_site(url, sent_notices):
     try:
         response = requests.get(url, headers=headers, timeout=20, verify=False)
         if response.status_code != 200:
-            logging.warning(f"Could not fetch {url}, Code: {response.status_code}")
             return
 
         soup = BeautifulSoup(response.text, 'html.parser')
         site_name = get_site_name(url)
-        
         rows = soup.find_all('tr')
         
         for row in rows:
-            row_text = row.get_text()
-            
-            # 🔍 ১. প্রথম ফিল্টার: এই সারিতে নির্দিষ্ট যেকোনো একটি KEYWORDS আছে কি না চেক করা
-            if not any(kw.lower() in row_text.lower() for kw in KEYWORDS):
-                continue
-
             anchors = row.find_all('a', href=True)
             if not anchors:
                 continue
@@ -165,32 +153,37 @@ def scrape_site(url, sent_notices):
                 text = a.get_text(strip=True)
                 href = a['href'].strip()
 
-                if len(text) > 3 and text not in ["দেখুন", "ডাউনলোড", "Download", "View"] and not title:
+                # শুধু দীর্ঘ বাক্য এবং ইগনোর শব্দের বাইরে থাকা লেখাগুলোকে টাইটেল হিসেবে নিবে
+                if len(text) > 5 and not any(w in text.lower() for w in IGNORE_WORDS) and not title:
                     title = text
                 
                 if any(ext in href.lower() for ext in ['.pdf', 'download', 'site/view/notices', 'node', 'pages/notices']):
                     file_link = href
 
-            if not title or title in ["দেখুন", "ডাউনলোড", "Download", "View"]:
+            # যদি লিংকের লেখায় টাইটেল না পাওয়া যায়, তবে সেলের বাকি টেক্সট দেখবে
+            if not title:
                 for td in tds:
                     txt = td.get_text(strip=True)
-                    if len(txt) > 5 and txt not in ["দেখুন", "ডাউনলোড", "Download", "View"] and txt != found_date:
+                    if len(txt) > 10 and not any(w in txt.lower() for w in IGNORE_WORDS) and txt != found_date:
                         title = txt
                         break
 
-            # 🔍 ২. দ্বিতীয় ফিল্টার: বের করা শিরোনামেও KEYWORDS মিলছে কি না নিশ্চিত হওয়া
-            if title and file_link and any(kw.lower() in title.lower() for kw in KEYWORDS):
-                full_pdf_url = urljoin(url, file_link)
-                notice_id = re.sub(r'[^a-zA-Z0-9]', '', full_pdf_url)
+            # 🎯 কড়া ফিল্টার: টাইটেল থাকতে হবে এবং টাইটেলের ভেতরে অবশ্যই KEYWORDS থাকতে হবে
+            if title and file_link:
+                is_relevant = any(kw.lower() in title.lower() for kw in KEYWORDS)
+                
+                if is_relevant:
+                    full_pdf_url = urljoin(url, file_link)
+                    notice_id = re.sub(r'[^a-zA-Z0-9]', '', full_pdf_url)
 
-                if notice_id not in sent_notices:
-                    date_str = format_to_bangla_date(found_date)
-                    display_time = f"তারিখ: {date_str}" if date_str else get_current_bd_datetime()
-                    category_tag = detect_category(title)
-                    
-                    if send_telegram_msg(title, full_pdf_url, site_name, display_time, category_tag):
-                        sent_notices.add(notice_id)
-                        save_sent_notice(notice_id)
+                    if notice_id not in sent_notices:
+                        date_str = format_to_bangla_date(found_date)
+                        display_time = f"তারিখ: {date_str}" if date_str else get_current_bd_datetime()
+                        category_tag = detect_category(title)
+                        
+                        if send_telegram_msg(title, full_pdf_url, site_name, display_time, category_tag):
+                            sent_notices.add(notice_id)
+                            save_sent_notice(notice_id)
 
     except Exception as e:
         logging.error(f"Error scraping {url}: {e}")
