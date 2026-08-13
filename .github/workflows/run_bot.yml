@@ -2,7 +2,7 @@ name: Hourly Notice Checker
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *' # প্রতি ঘণ্টা পর পর ক্লাউডে স্বয়ংক্রিয়ভাবে চলবে
   workflow_dispatch:
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python telegram_bot.py
+        run: python xsjobnotice_bot.py
 
       - name: Save History
         run: |
