@@ -56,21 +56,14 @@ https://mefwd.gov.bd/site/view/notices
 https://hsd.gov.bd/site/view/notices
 https://shed.gov.bd/site/view/notices
 https://tmed.gov.bd/site/view/notices
-
-Notice Board URL
 https://afd.gov.bd/site/view/notices
 https://afd.gov.bd/site/view/notices
-
-Notice Board URL
 https://cabinet.gov.bd/site/view/notices
 https://cabinet.gov.bd/site/view/notices
-
-Notice Board URL
 https://mopa.gov.bd/site/view/notices
 https://mopa.gov.bd/site/view/notices
 https://bpatc.org.bd/site/notices
 https://bcsadminacademy.gov.bd/site/view/notices
-Notice Board URL
 https://dhaka.gov.bd/site/view/notices
 https://chattogramdiv.gov.bd/site/view/notices
 https://rajshahidiv.gov.bd/site/view/notices
@@ -79,7 +72,6 @@ https://barishaldiv.gov.bd/site/view/notices
 https://sylhetdiv.gov.bd/site/view/notices
 https://rangpurdiv.gov.bd/site/view/notices
 https://mymensinghdiv.gov.bd/site/view/notices
-Notice Board URL
 https://bagerhat.gov.bd/site/view/notices
 https://bandarban.gov.bd/site/view/notices
 https://barguna.gov.bd/site/view/notices
@@ -144,7 +136,6 @@ https://sunamganj.gov.bd/site/view/notices
 https://sylhet.gov.bd/site/view/notices
 https://tangail.gov.bd/site/view/notices
 https://thakurgaon.gov.bd/site/view/notices
-
 https://mof.gov.bd/site/view/notices
 https://finance.gov.bd/site/view/notices
 https://ird.gov.bd/site/view/notices
@@ -176,7 +167,6 @@ https://taxeszone6.gov.bd/site/view/notices
 https://taxeszone7.dhaka.gov.bd/site/view/notices
 https://taxeszone8dhaka.gov.bd/site/view/notices
 https://taxeszone9dhaka.gov.bd/site/view/notices
-—
 https://itiiu.portal.gov.bd/site/view/notices
 https://taxesinspection.gov.bd/site/view/notices
 https://bcstaxacademy.gov.bd/site/view/notices
@@ -258,7 +248,6 @@ https://www.bnfbd.org/site/view/notices
 https://www.bmdf.org.bd/site/view/notices
 https://erd.gov.bd/site/view/notices
 https://www.iifc.gov.bd/career
-
 https://planmin.gov.bd/site/view/notices
 https://plandiv.gov.bd/site/view/notices
 https://sid.gov.bd/site/view/notices
@@ -267,7 +256,6 @@ https://plancomm.gov.bd/site/view/notices
 https://bids.org.bd/site/view/notices
 https://bbs.portal.gov.bd/site/view/notices
 https://imed.gov.bd/site/view/notices
-
 https://mincom.gov.bd/site/view/notices
 https://ccie.gov.bd/site/view/notices
 https://tcb.gov.bd/site/view/notices
@@ -276,14 +264,12 @@ https://btc.gov.bd/site/view/notices
 https://teaboard.gov.bd/site/view/notices
 https://bfti.org.bd/site/view/notices
 https://app.roc.gov.bd
-
 https://bab.gov.bd/site/view/notices
 https://bim.gov.bd/site/view/notices
 https://npo.gov.bd/site/view/notices
 https://boiler.gov.bd/site/view/notices
 https://smef.gov.bd/site/view/notices
 https://smcif.gov.bd/site/view/notices
-
 https://mole.gov.bd/site/view/notices
 https://dol.gov.bd/site/view/notices
 https://dife.gov.bd/site/view/notices
@@ -291,7 +277,6 @@ https://blwf.gov.bd/site/view/notices
 https://labourwelfare.gov.bd
 https://mole.gov.bd/site/view/notices
 https://mole.gov.bd/site/view/notices
-
 https://probashi.gov.bd/site/view/notices
 https://bmet.gov.bd/site/view/notices
 https://wewb.gov.bd/site/view/notices
