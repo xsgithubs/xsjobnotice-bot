@@ -2,8 +2,8 @@ name: Hourly Notice Checker
 
 on:
   schedule:
-    - cron: '0 * * * *'
-  workflow_dispatch:
+    - cron: '0 * * * *' # প্রতি ঘণ্টা পর পর ক্লাউডে অটোমেটিক রান হবে
+  workflow_dispatch: # ম্যানুয়ালি রান করার জন্য
 
 jobs:
   run-bot:
@@ -33,5 +33,5 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add downloaded_history.txt || true
-          git commit -m "Update download history" || echo "No changes to commit"
+          git commit -m "Update sent notice history" || echo "No changes to commit"
           git push || true
