@@ -6,6 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -106,7 +107,6 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
     
-    # 🎨 আপনার ছবির মতো হুবহু কার্ড ডিজাইনের HTML স্ট্রাকচার
     message = (
         f"🏷 <b>{clean_title}</b>\n\n"
         f"> <b>তারিখ:</b> {display_time}\n"
@@ -124,7 +124,7 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     }
     
     try:
-        res = requests.post(telegram_url, json=payload, timeout=15)
+        res = requests.post(telegram_url, json=payload, timeout=10)
         res.raise_for_status()
         logging.info(f"Sent: {title}")
         return True
@@ -133,12 +133,18 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
         return False
 
 def scrape_site(url, sent_notices):
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        logging.warning(f"Skipping invalid URL format: {url}")
+        return
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=20, verify=False)
+        # টাইমআউট ৮ সেকেন্ড করা হয়েছে যাতে ধীরগতির সাইটে আটকে না থাকে
+        response = requests.get(url, headers=headers, timeout=8, verify=False)
         if response.status_code != 200:
             return
 
@@ -210,9 +216,10 @@ def main():
         with open(URLS_FILE, "r", encoding="utf-8") as f:
             urls = [line.strip() for line in f if line.strip()]
         
-        for url in urls:
-            logging.info(f"Scraping: {url}")
-            scrape_site(url, sent_notices)
+        # 🚀 একই সাথে সর্বোচ্চ ১০টি ওয়েবসাইটে রিকোয়েস্ট পাঠানোর ব্যবস্থা (Fast Scraping)
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            executor.map(lambda u: scrape_site(u, sent_notices), urls)
+            
     else:
         logging.error(f"{URLS_FILE} file missing!")
 
