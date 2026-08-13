@@ -14,6 +14,13 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 SENT_NOTICES_FILE = "downloaded_history.txt"
 URLS_FILE = "xsjobnoticeurls.txt"
 
+# ফিল্টার করার জন্য নির্দিষ্ট কিওয়ার্ডসমূহ
+KEYWORDS = [
+    "নিয়োগ", "চাকরি", "পরীক্ষা", "সময়সূচী", "প্রবেশপত্র", "বিজ্ঞপ্তি",
+    "ফলাফল", "মেধা তালিকা", "ভর্তি", "আসন বিন্যাস",
+    "circular", "recruitment", "job", "admit card", "exam", "result", "merit list", "admission"
+]
+
 # ওয়েবসাইট অনুযায়ী দপ্তরের বাংলা নামের তালিকা
 DEPT_NAME_MAP = {
     "mopa.gov.bd": "জনপ্রশাসন মন্ত্রণালয়",
@@ -50,17 +57,16 @@ def get_current_bd_datetime():
     bd_dt = datetime.now(timezone.utc) + timedelta(hours=6)
     
     day = bd_dt.strftime("%d").translate(EN_TO_BN_NUM)
-    month_en = bd_dt.strftime("%B")
-    month = MONTH_MAP.get(month_en, month_en)
+    month = bd_dt.strftime("%m").translate(EN_TO_BN_NUM)
     year = bd_dt.strftime("%Y").translate(EN_TO_BN_NUM)
     
     time_str = bd_dt.strftime("%I,%M").translate(EN_TO_BN_NUM)
     ampm = "সকাল" if bd_dt.hour < 12 else "বিকাল" if bd_dt.hour < 17 else "সন্ধ্যা" if bd_dt.hour < 20 else "রাত"
     
-    return f"তারিখ: {day}/{bd_dt.strftime('%m').translate(EN_TO_BN_NUM)}/{year}, সময়: {ampm} {time_str}টা"
+    return f"তারিখ: {day}/{month}/{year}, সময়: {ampm} {time_str}টা"
 
 def detect_category(text):
-    """শিরোনাম দেখে ক্যাটাগরি নির্ধারণ করার ফাংশন (হ্যাশট্যাগ ছাড়া)"""
+    """শিরোনাম দেখে ক্যাটাগরি নির্ধারণ করার ফাংশন"""
     text_lower = text.lower()
     tags = []
     if any(k in text_lower for k in ["নিয়োগ", "চাকরি", "circular", "recruitment", "job"]):
@@ -92,7 +98,6 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
     
-    # আপনার চাওয়া হুবহু ফরম্যাট অনুযায়ী মেসেজ স্ট্রাকচার
     message = (
         f"📝 <b>শিরোনাম:</b> {clean_title}\n"
         f"⏱️ {display_time}\n"
@@ -135,6 +140,12 @@ def scrape_site(url, sent_notices):
         rows = soup.find_all('tr')
         
         for row in rows:
+            row_text = row.get_text()
+            
+            # 🔍 ১. প্রথম ফিল্টার: এই সারিতে নির্দিষ্ট যেকোনো একটি KEYWORDS আছে কি না চেক করা
+            if not any(kw.lower() in row_text.lower() for kw in KEYWORDS):
+                continue
+
             anchors = row.find_all('a', href=True)
             if not anchors:
                 continue
@@ -167,7 +178,8 @@ def scrape_site(url, sent_notices):
                         title = txt
                         break
 
-            if title and file_link:
+            # 🔍 ২. দ্বিতীয় ফিল্টার: বের করা শিরোনামেও KEYWORDS মিলছে কি না নিশ্চিত হওয়া
+            if title and file_link and any(kw.lower() in title.lower() for kw in KEYWORDS):
                 full_pdf_url = urljoin(url, file_link)
                 notice_id = re.sub(r'[^a-zA-Z0-9]', '', full_pdf_url)
 
