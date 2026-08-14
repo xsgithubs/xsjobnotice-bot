@@ -12,9 +12,10 @@ from urllib3.util.retry import Retry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# গিটহাব সিক্রেটস অনুযায়ী ভ্যারিয়েবল
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# গিটহাব সিক্রেটসের মূল নামের সাথে সরাসরি মিলিয়ে নেওয়া হলো
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID")
+
 SENT_NOTICES_FILE = "downloaded_history.txt"
 URLS_FILE = "xsjobnoticeurls.txt"
 
