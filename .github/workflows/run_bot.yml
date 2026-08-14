@@ -2,7 +2,7 @@ name: Hourly Notice Checker
 
 on:
   schedule:
-    - cron: '*/25 * * * *' # 👈 প্রতি ২৫ মিনিট পর পর রান হবে
+    - cron: '*/50 * * * *' # 👈 প্রতি ৫০ মিনিট পর পর রান হবে
   workflow_dispatch:
 
 jobs:
