@@ -12,6 +12,7 @@ from urllib3.util.retry import Retry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# গিটহাব সিক্রেটস অনুযায়ী ভ্যারিয়েবল
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 SENT_NOTICES_FILE = "downloaded_history.txt"
@@ -78,10 +79,8 @@ def save_sent_notice(notice_id):
         f.write(f"{notice_id}\n")
 
 def extract_site_name(soup, url):
-    """স্বয়ংক্রিয়ভাবে জাতীয় তথ্য বাতায়নের উপাদান বা টাইটেল থেকে সঠিক দপ্তরের নাম বের করার পদ্ধতি"""
     domain = urlparse(url).netloc.replace("www.", "").lower()
     
-    # ১. বাংলাদেশ জাতীয় তথ্য বাতায়নের নির্দিষ্ট আইডি ও ক্লাস অনুসন্ধান
     selectors = [
         '#site-name', '.site-name', '#site-title', '.site-title', 
         '#header-site-title', '.logo-text', 'div.logo-title'
@@ -94,14 +93,12 @@ def extract_site_name(soup, url):
             if text and re.search(r'[\u0980-\u09FF]', text) and len(text) > 3:
                 return text
 
-    # ২. Open Graph মেটা ট্যাগ চেক
     og_site = soup.find("meta", property="og:site_name")
     if og_site and og_site.get("content"):
         content = og_site["content"].strip()
         if re.search(r'[\u0980-\u09FF]', content):
             return content
 
-    # ৩. <title> ট্যাগ ফিল্টারিং
     try:
         title_tag = soup.find('title')
         if title_tag:
@@ -126,7 +123,6 @@ def extract_site_name(soup, url):
     return domain.upper()
 
 def create_requests_session():
-    """নেটওয়ার্ক ড্রপের সময় রিট্রাই করার সেশন"""
     session = requests.Session()
     retries = Retry(total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
     adapter = HTTPAdapter(max_retries=retries)
@@ -138,7 +134,6 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
     
-    # আপনার পছন্দসই টেলিগ্রাম বার্তা কার্ড (code ট্যাগে ফন্ট সাইজ ছোট দেখাবে)
     message = (
         f"🔖 <b>{clean_title}</b>\n\n"
         f"<code>তারিখ: {display_time}</code>\n"
