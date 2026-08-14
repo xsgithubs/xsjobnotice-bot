@@ -25,14 +25,6 @@ KEYWORDS = [
 
 IGNORE_WORDS = ["দেখুন", "ডাউনলোড", "download", "view", "details", "বিস্তারিত", "click here", "pdf"]
 
-DEPT_NAME_MAP = {
-    "mopa.gov.bd": "জনপ্রশাসন মন্ত্রণালয়",
-    "lgd.gov.bd": "স্থানীয় সরকার বিভাগ",
-    "mof.gov.bd": "অর্থ বিভাগ",
-    "cabinet.gov.bd": "মন্ত্রিপরিষদ বিভাগ",
-    "barisaldiv.gov.bd": "বিভাগীয় কমিশনারের কার্যালয়, বরিশাল",
-}
-
 EN_TO_BN_NUM = str.maketrans("0123456789", "০১২৩৪৫৬৭৮৯")
 
 MONTH_MAP = {
@@ -86,19 +78,47 @@ def save_sent_notice(notice_id):
         f.write(f"{notice_id}\n")
 
 def extract_site_name(soup, url):
+    """স্বয়ংক্রিয়ভাবে জাতীয় তথ্য বাতায়নের উপাদান বা টাইটেল থেকে সঠিক দপ্তরের নাম বের করার পদ্ধতি"""
     domain = urlparse(url).netloc.replace("www.", "").lower()
     
-    if domain in DEPT_NAME_MAP:
-        return DEPT_NAME_MAP[domain]
+    # ১. বাংলাদেশ জাতীয় তথ্য বাতায়নের নির্দিষ্ট আইডি ও ক্লাস অনুসন্ধান
+    selectors = [
+        '#site-name', '.site-name', '#site-title', '.site-title', 
+        '#header-site-title', '.logo-text', 'div.logo-title'
+    ]
     
+    for selector in selectors:
+        element = soup.select_one(selector)
+        if element:
+            text = element.get_text(strip=True)
+            if text and re.search(r'[\u0980-\u09FF]', text) and len(text) > 3:
+                return text
+
+    # ২. Open Graph মেটা ট্যাগ চেক
+    og_site = soup.find("meta", property="og:site_name")
+    if og_site and og_site.get("content"):
+        content = og_site["content"].strip()
+        if re.search(r'[\u0980-\u09FF]', content):
+            return content
+
+    # ৩. <title> ট্যাগ ফিল্টারিং
     try:
         title_tag = soup.find('title')
         if title_tag:
             full_title = title_tag.get_text(strip=True)
-            parts = re.split(r'\||-|–', full_title)
+            parts = re.split(r'\||-|–|::', full_title)
+            
+            skip_words = ["নোটিশ board", "নোটিশ বোর্ড", "নোটিশ", "notice board", "notice", "home", "welcome", "হোম"]
+            
             for part in parts:
                 clean_part = part.strip()
-                if re.search(r'[\u0980-\u09FF]', clean_part) and "Home" not in clean_part and "Welcome" not in clean_part:
+                if re.search(r'[\u0980-\u09FF]', clean_part):
+                    if not any(sw == clean_part.lower() for sw in skip_words):
+                        return clean_part
+                        
+            for part in parts:
+                clean_part = part.strip()
+                if len(clean_part) > 3 and not any(sw in clean_part.lower() for sw in skip_words):
                     return clean_part
     except Exception:
         pass
@@ -106,7 +126,7 @@ def extract_site_name(soup, url):
     return domain.upper()
 
 def create_requests_session():
-    """সাময়িক নেটওয়ার্ক ড্রপের সময় রিট্রাই করার সেশন তৈরি"""
+    """নেটওয়ার্ক ড্রপের সময় রিট্রাই করার সেশন"""
     session = requests.Session()
     retries = Retry(total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
     adapter = HTTPAdapter(max_retries=retries)
@@ -118,7 +138,7 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
     
-    # code ট্যাগ ব্যবহার করে ফন্ট সাইজ ছোট দেখানোর উপায়
+    # আপনার পছন্দসই টেলিগ্রাম বার্তা কার্ড (code ট্যাগে ফন্ট সাইজ ছোট দেখাবে)
     message = (
         f"🔖 <b>{clean_title}</b>\n\n"
         f"<code>তারিখ: {display_time}</code>\n"
@@ -147,7 +167,6 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
 def scrape_site(url, sent_notices, session):
     url = url.strip()
     if not url.startswith(("http://", "https://")):
-        logging.warning(f"Skipping invalid URL format: {url}")
         return
 
     headers = {
@@ -214,7 +233,6 @@ def scrape_site(url, sent_notices, session):
                             save_sent_notice(notice_id)
 
     except requests.exceptions.RequestException as e:
-        # সংযোগ ব্যর্থ হলে বা ডোমেইন খুঁজে না পেলে সংক্ষেপে ওয়ার্নিং দেখাবে
         logging.warning(f"Could not reach {url}: {e}")
     except Exception as e:
         logging.error(f"Error scraping {url}: {e}")
