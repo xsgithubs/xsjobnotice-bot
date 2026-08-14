@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -103,6 +105,15 @@ def extract_site_name(soup, url):
 
     return domain.upper()
 
+def create_requests_session():
+    """সাময়িক নেটওয়ার্ক ড্রপের সময় রিট্রাই করার সেশন তৈরি"""
+    session = requests.Session()
+    retries = Retry(total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
 def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
@@ -132,7 +143,7 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
         logging.error(f"Telegram error: {e}")
         return False
 
-def scrape_site(url, sent_notices):
+def scrape_site(url, sent_notices, session):
     url = url.strip()
     if not url.startswith(("http://", "https://")):
         logging.warning(f"Skipping invalid URL format: {url}")
@@ -143,8 +154,7 @@ def scrape_site(url, sent_notices):
     }
     
     try:
-        # টাইমআউট ৮ সেকেন্ড করা হয়েছে যাতে ধীরগতির সাইটে আটকে না থাকে
-        response = requests.get(url, headers=headers, timeout=8, verify=False)
+        response = session.get(url, headers=headers, timeout=8, verify=False)
         if response.status_code != 200:
             return
 
@@ -202,6 +212,9 @@ def scrape_site(url, sent_notices):
                             sent_notices.add(notice_id)
                             save_sent_notice(notice_id)
 
+    except requests.exceptions.RequestException as e:
+        # সংযোগ ব্যর্থ হলে বা ডোমেইন খুঁজে না পেলে সংক্ষেপে ওয়ার্নিং দেখাবে
+        logging.warning(f"Could not reach {url}: {e}")
     except Exception as e:
         logging.error(f"Error scraping {url}: {e}")
 
@@ -211,14 +224,14 @@ def main():
         return
 
     sent_notices = load_sent_notices()
+    session = create_requests_session()
     
     if os.path.exists(URLS_FILE):
         with open(URLS_FILE, "r", encoding="utf-8") as f:
             urls = [line.strip() for line in f if line.strip()]
         
-        # 🚀 একই সাথে সর্বোচ্চ ১০টি ওয়েবসাইটে রিকোয়েস্ট পাঠানোর ব্যবস্থা (Fast Scraping)
         with ThreadPoolExecutor(max_workers=10) as executor:
-            executor.map(lambda u: scrape_site(u, sent_notices), urls)
+            executor.map(lambda u: scrape_site(u, sent_notices, session), urls)
             
     else:
         logging.error(f"{URLS_FILE} file missing!")
