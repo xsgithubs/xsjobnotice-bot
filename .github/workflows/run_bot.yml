@@ -2,7 +2,7 @@ name: Notice Checker Bot
 
 on:
   schedule:
-    - cron: '*/45 * * * *' # 👈 প্রতি ৪৫ মিনিট পর পর রান হবে
+    - cron: '*/45 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -25,8 +25,10 @@ jobs:
 
       - name: Run Script
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python xsjobnotice_bot.py
 
       - name: Commit and Push History
