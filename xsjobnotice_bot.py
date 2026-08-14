@@ -118,12 +118,13 @@ def send_telegram_msg(title, pdf_url, site_name, display_time, category_tag):
     clean_title = html.escape(title.strip())
     clean_site_name = html.escape(site_name.strip())
     
+    # code ট্যাগ ব্যবহার করে ফন্ট সাইজ ছোট দেখানোর উপায়
     message = (
-        f"🏷 <b>{clean_title}</b>\n\n"
-        f"> <b>তারিখ:</b> {display_time}\n"
-        f"> <b>ক্যাটাগরি:</b> {category_tag}\n"
-        f"> <b>দপ্তর:</b> {clean_site_name}\n\n"
-        f"⬇️ <a href='{pdf_url}'>ডাউনলোড/বিস্তারিত দেখুন</a>"
+        f"🔖 <b>{clean_title}</b>\n\n"
+        f"<code>তারিখ: {display_time}</code>\n"
+        f"<code>ক্যাটাগরি: {category_tag}</code>\n"
+        f"<code>দপ্তর: {clean_site_name}</code>\n\n"
+        f"🔗 <a href='{pdf_url}'><b>ডাউনলোড / বিস্তারিত দেখুন</b></a>"
     )
     
     telegram_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
