@@ -1,4 +1,4 @@
-name: Hourly Notice Checker
+name: Notice Checker Bot
 
 on:
   schedule:
